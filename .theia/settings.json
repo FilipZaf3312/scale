@@ -1,0 +1,11 @@
+{
+	"editor.insertSpaces": false,
+	"editor.tabSize": 8,
+	"editor.detectIndentation": false,
+	"editor.autoIndent": "full",
+	"editor.scrollBeyondLastLine": true,
+	"editor.scrollBeyondLastColumn": 8,
+	"editor.smoothScrolling": false,
+	"editor.trimAutoWhitespace": false,
+	"editor.useTabStops": false
+}
