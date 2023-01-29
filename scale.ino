@@ -47,14 +47,14 @@ HX711 hx711;
 //VARIABLES
 int set_weight = 100;
 int weight = 0;
-int stop_weight = 100;
+int stop_weight = 1000;
 
 
 void setup(){
 	button_list.begin(); //setup buttons
 	button_1.setHeldTime(200);
 	button_2.setHeldTime(200);
-	button_3.setHeldTime(2000);
+	button_3.setHeldTime(1000);
 	button_4.setHeldTime(2000);
 	
 	pinMode(RELAY_1, OUTPUT); //setup relays
@@ -229,6 +229,10 @@ void loop(){
 		trigger_relays();
 		stop_weight = weight;
 	}
+	
+	if(weight < set_weight -25){
+		stop_weight = 1000; //reset the stop_weight
+	}
 }
 
 
@@ -284,6 +288,8 @@ void update_weight(){
 //write the set_weight value to the screen
 void update_set_weight(){
 	String set_weight_str(set_weight);
+	
+	stop_weight = 1000; //reset the stop_weight
 	
 	while(set_weight_str.length() < 3){
 		set_weight_str = " " + set_weight_str;
