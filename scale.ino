@@ -52,10 +52,10 @@ int stop_weight = 1000;
 
 void setup(){
 	button_list.begin(); //setup buttons
-	button_1.setHeldTime(200);
-	button_2.setHeldTime(200);
-	button_3.setHeldTime(1000);
-	button_4.setHeldTime(2000);
+	button_1.setHeldTime(100);
+	button_2.setHeldTime(100);
+	button_3.setHeldTime(500);
+	button_4.setHeldTime(1000);
 	
 	pinMode(RELAY_1, OUTPUT); //setup relays
 	pinMode(RELAY_2, OUTPUT);
