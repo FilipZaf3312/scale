@@ -47,15 +47,21 @@ HX711 hx711;
 //VARIABLES
 int set_weight = 100;
 int weight = 0;
-int stop_weight = 1000;
+int weight_array[10];
+byte weight_array_index = 0;
+
+bool relays_active = false;
+
+unsigned long beep_time = 0;
+bool is_beeping = false;
 
 
 void setup(){
 	button_list.begin(); //setup buttons
 	button_1.setHeldTime(100);
 	button_2.setHeldTime(100);
-	button_3.setHeldTime(500);
-	button_4.setHeldTime(1000);
+	button_3.setHeldTime(200);
+	button_4.setHeldTime(500);
 	
 	pinMode(RELAY_1, OUTPUT); //setup relays
 	pinMode(RELAY_2, OUTPUT);
@@ -72,7 +78,7 @@ void setup(){
 	screen.PCF8574_LCDInit(LCDCursorTypeOff); //start screen
 	screen.PCF8574_LCDClearScreen(); //clear the screen
 	screen.PCF8574_LCDBackLightSet(true); //turn on the backlight
-	screen.PCF8574_LCDGOTO(LCDLineNumberOne, 0); //go to the first line and row
+	screen.PCF8574_LCDGOTO(LCDLineNumberOne, 6);
 	screen.print("Starting...");
 	
 	uint8_t char0[8] = {0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b11111, 0b11111}; //custom characters for large numbers
@@ -95,20 +101,17 @@ void setup(){
 	
 	hx711.begin(HX711_DT, HX711_SCL); //start the sensor
 	hx711.wait_ready();
-	hx711.set_gain(HX711_CHANNEL_A_GAIN_128, true); //set the gain
+	hx711.set_gain(HX711_CHANNEL_A_GAIN_64, true); //set the gain
 	load_settings(); //set offset and scale settings
 	
-	trigger_relays(); //test the relays
-	
-	screen.PCF8574_LCDClearScreen();
-	screen.print("Ready."); //show that were done
-	
+	beep(500);
 	show_weight(); //start normal operation
 }
 
 
 void loop(){
 	button_list.handle();
+	handle_beep();
 	
 	//decrement
 	if(button_1.resetClicked() and set_weight > 0){
@@ -140,15 +143,17 @@ void loop(){
 	
 	//stop
 	if(button_3.isHeld()){
-		trigger_relays();
-		
-		stop_weight = weight;
+		set_relays();
+		beep(500);
+		delay(500);
+		reset_relays();
+		handle_beep();
 	}
 	
 	//tare
 	if(button_4.resetClicked()){
 		screen.PCF8574_LCDClearScreen();
-		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 0);
+		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 6);
 		screen.print("Tare...");
 		
 		hx711.tare(25);
@@ -161,22 +166,25 @@ void loop(){
 		button_list.handle();
 		
 		screen.PCF8574_LCDClearScreen();
-		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 0);
+		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 6);
 		screen.print("Tare...");
 		
 		hx711.tare(25);
+		button_list.handle();
 		
 		screen.PCF8574_LCDClearScreen();
 		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 0);
 		screen.print("Calibration");
 		screen.PCF8574_LCDGOTO(LCDLineNumberThree, 0);
-		screen.print("Weight:");
+		screen.print("weight:");
 		
 		int cal_weight = 100;
 		update_cal_weight(cal_weight);
+		button_list.handle();
 		
 		while(not button_4.isHeld()){
 			button_list.handle();
+			handle_beep();
 			
 			//decrement
 			if(button_1.resetClicked() and cal_weight > 0){
@@ -206,6 +214,8 @@ void loop(){
 			if(button_3.isHeld()){
 				show_weight();
 				button_4.resetClicked();
+				button_list.handle();
+				
 				goto canceled;
 			}
 		}
@@ -224,14 +234,13 @@ void loop(){
 	canceled:
 	update_weight();
 	
-	//when the set weight is reached, set off the relays
-	if(weight >= set_weight and weight < stop_weight + 10){
-		trigger_relays();
-		stop_weight = weight;
+	//when the set weight is reached, enable the relays
+	if(weight >= set_weight and !relays_active){
+		set_relays();
+		beep(500);
 	}
-	
-	if(weight < set_weight -25){
-		stop_weight = 1000; //reset the stop_weight
+	else if(weight < set_weight and relays_active){
+		reset_relays();
 	}
 }
 
@@ -239,6 +248,7 @@ void loop(){
 //prepare the screen for displaying weight
 void show_weight(){
 	screen.PCF8574_LCDClearScreen();
+	//draw the vertical seperating line
 	screen.PCF8574_LCDGOTO(LCDLineNumberOne, 9);
 	screen.PCF8574_LCDPrintCustomChar(6);
 	screen.PCF8574_LCDPrintCustomChar(2);
@@ -259,8 +269,17 @@ void show_weight(){
 
 //write the weight value to the screen
 void update_weight(){
-	weight *= 9; //get the average of the last 10 readings
-	weight += hx711.read();
+	weight_array[weight_array_index] = hx711.get_units(1); //read the sensor
+	
+	weight_array_index ++;
+	if(weight_array_index > 9){
+		weight_array_index = 0;
+	}
+	
+	weight = 0; //get the average of the last 10 readings
+	for(byte i = 0; i < 10; i++){
+		weight += weight_array[i];
+	}
 	weight /= 10;
 	
 	String weight_str;
@@ -289,8 +308,6 @@ void update_weight(){
 void update_set_weight(){
 	String set_weight_str(set_weight);
 	
-	stop_weight = 1000; //reset the stop_weight
-	
 	while(set_weight_str.length() < 3){
 		set_weight_str = " " + set_weight_str;
 	}
@@ -298,6 +315,8 @@ void update_set_weight(){
 	print_big_char(set_weight_str.charAt(0), 11);
 	print_big_char(set_weight_str.charAt(1), 14);
 	print_big_char(set_weight_str.charAt(2), 17);
+	
+	beep(50);
 }
 
 
@@ -312,6 +331,49 @@ void update_cal_weight(int cal_weight){
 	print_big_char(cal_weight_str.charAt(0), 11);
 	print_big_char(cal_weight_str.charAt(1), 14);
 	print_big_char(cal_weight_str.charAt(2), 17);
+	
+	beep(50);
+}
+
+
+//set all relays to "on"
+void set_relays(){
+	relays_active = true;
+	digitalWrite(RELAY_1, HIGH);
+	delay(20);
+	digitalWrite(RELAY_2, HIGH);
+	delay(20);
+	digitalWrite(RELAY_3, HIGH);
+	delay(20);
+	digitalWrite(RELAY_4, HIGH);
+}
+
+
+//turn all relays back to "off"
+void reset_relays(){
+	relays_active = false;
+	digitalWrite(RELAY_1, LOW);
+	delay(20);
+	digitalWrite(RELAY_2, LOW);
+	delay(20);
+	digitalWrite(RELAY_3, LOW);
+	delay(20);
+	digitalWrite(RELAY_4, LOW);
+}
+
+
+void beep(unsigned long time){
+	is_beeping = true;
+	beep_time = millis() + time;
+	digitalWrite(BUZZER, HIGH);
+}
+
+
+void handle_beep(){
+	if(is_beeping and millis() >= beep_time){
+		is_beeping = false;
+		digitalWrite(BUZZER, LOW);
+	}
 }
 
 
@@ -560,33 +622,6 @@ void print_big_char(char digit, int row){
 			break;
 	}
 	
-}
-
-
-//enables all 4 relays for a short time, slightly staggered
-void trigger_relays(){
-	screen.PCF8574_LCDBackLightSet(false);
-	digitalWrite(BUZZER, HIGH);
-	
-	digitalWrite(RELAY_1, HIGH);
-	delay(20);
-	digitalWrite(RELAY_2, HIGH);
-	delay(20);
-	digitalWrite(RELAY_3, HIGH);
-	delay(20);
-	digitalWrite(RELAY_4, HIGH);
-	delay(500);
-	
-	digitalWrite(RELAY_1, LOW);
-	delay(20);
-	digitalWrite(RELAY_2, LOW);
-	delay(20);
-	digitalWrite(RELAY_3, LOW);
-	delay(20);
-	digitalWrite(RELAY_4, LOW);
-	
-	digitalWrite(BUZZER, LOW);
-	screen.PCF8574_LCDBackLightSet(true);
 }
 
 
