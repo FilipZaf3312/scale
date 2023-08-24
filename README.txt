@@ -8,7 +8,6 @@ features:
 the hardware used:
 	arduino nano
 	2004 lcd, with an i2c backpack
-	i2c eeprom (the exact model or capacity shouldnt matter, 8 bytes are used)
 	HX711 loadcell amplifier/ADC
 	4-relay module (using less is also possible)
 	4 momentary pushbuttons

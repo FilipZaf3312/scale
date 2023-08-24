@@ -2,26 +2,27 @@
 #include <Wire.h>
 #include <HD44780_LCD_PCF8574.h>
 #include <HX711.h>
+#include <EEPROM.h>
 
 using Button = AblePullupClickerButton;
 using ButtonList = AblePullupClickerButtonList;
 
 //D5 - D8 BUTTONS
-const int BUTTON_1 = 5;
-const int BUTTON_2 = 6;
-const int BUTTON_3 = 7;
-const int BUTTON_4 = 8;
+const int BUTTON_INC = 5;
+const int BUTTON_DEC = 6;
+const int BUTTON_STOP = 7;
+const int BUTTON_TARE = 8;
 
-Button button_1(BUTTON_1);
-Button button_2(BUTTON_2);
-Button button_3(BUTTON_3);
-Button button_4(BUTTON_4);
+Button button_inc(BUTTON_INC);
+Button button_dec(BUTTON_DEC);
+Button button_stop(BUTTON_STOP);
+Button button_tare(BUTTON_TARE);
 
 Button *buttons[] = {
-	&button_1,
-	&button_2,
-	&button_3,
-	&button_4
+	&button_inc,
+	&button_dec,
+	&button_stop,
+	&button_tare
 };
 ButtonList button_list(buttons);
 
@@ -34,15 +35,21 @@ const int RELAY_4 = 12;
 //D13 BUZZER/INDICATOR
 const int BUZZER = 13;
 
-//I2C BUS
-const int EEPROM_ADRESS = 80;
+//SCREEN
 const int SCREEN_ADRESS = 39; //0x27
-HD44780LCD screen(4, 20, SCREEN_ADRESS);
+TwoWire wire;
+HD44780LCD screen(4, 20, SCREEN_ADRESS, &wire);
 
 //HX711
 const int HX711_DT = 2;
 const int HX711_SCL = 3;
 HX711 hx711;
+
+//OTHER CONFIG
+const int HYSTERESIS = 5;
+
+const unsigned long DELAY_RELAYS = 20;
+const unsigned long DELAY_CAL_MENU = 50;
 
 //VARIABLES
 int set_weight = 100;
@@ -58,10 +65,10 @@ bool is_beeping = false;
 
 void setup(){
 	button_list.begin(); //setup buttons
-	button_1.setHeldTime(100);
-	button_2.setHeldTime(100);
-	button_3.setHeldTime(200);
-	button_4.setHeldTime(500);
+	button_inc.setHeldTime(100);
+	button_dec.setHeldTime(100);
+	button_stop.setHeldTime(100);
+	button_tare.setHeldTime(1000);
 	
 	pinMode(RELAY_1, OUTPUT); //setup relays
 	pinMode(RELAY_2, OUTPUT);
@@ -75,11 +82,17 @@ void setup(){
 	Wire.begin(); //begin I2C
 	
 	delay(200); //wait for screen to start
-	screen.PCF8574_LCDInit(LCDCursorTypeOff); //start screen
+	screen.PCF8574_LCDInit(HD44780LCD::LCDCursorTypeOff); //start screen
 	screen.PCF8574_LCDClearScreen(); //clear the screen
 	screen.PCF8574_LCDBackLightSet(true); //turn on the backlight
-	screen.PCF8574_LCDGOTO(LCDLineNumberOne, 6);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberOne, 6);
 	screen.print("Starting...");
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 6);
+	screen.print("github.com/");
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, 1);
+	screen.print("FilipZaf3312/scale");
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, 8);
+	screen.print("rev 1");
 	
 	uint8_t char0[8] = {0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b11111, 0b11111}; //custom characters for large numbers
 	uint8_t char1[8] = {0b00000, 0b00000, 0b00000, 0b00000, 0b10000, 0b11000, 0b11000, 0b11100};
@@ -101,7 +114,7 @@ void setup(){
 	
 	hx711.begin(HX711_DT, HX711_SCL); //start the sensor
 	hx711.wait_ready();
-	hx711.set_gain(HX711_CHANNEL_A_GAIN_64, true); //set the gain
+	hx711.set_gain(HX711_CHANNEL_A_GAIN_128, true); //set the gain
 	load_settings(); //set offset and scale settings
 	
 	beep(500);
@@ -114,35 +127,35 @@ void loop(){
 	handle_beep();
 	
 	//decrement
-	if(button_1.resetClicked() and set_weight > 0){
+	if(button_dec.resetClicked() and set_weight > 0){
 		set_weight -= 10;
 		update_set_weight();
 	}
 	
 	//fast decrement
-	if(button_1.isHeld() and set_weight > 0){
+	if(button_dec.isHeld() and set_weight > 0){
 		set_weight -= 10;
 		update_set_weight();
 	}
 	
 	//increment
-	if(button_2.resetClicked() and set_weight < 990){
+	if(button_inc.resetClicked() and set_weight < 990){
 		set_weight += 10;
 		update_set_weight();
 	}
 	
 	//fast increment
-	if(button_2.isHeld() and set_weight < 990){
+	if(button_inc.isHeld() and set_weight < 990){
 		set_weight += 10;
 		update_set_weight();
 	}
 	
-	if(button_3.resetClicked()){
+	if(button_stop.resetClicked()){
 		//
 	}
 	
 	//stop
-	if(button_3.isHeld()){
+	if(button_stop.isHeld()){
 		set_relays();
 		beep(500);
 		delay(500);
@@ -151,9 +164,9 @@ void loop(){
 	}
 	
 	//tare
-	if(button_4.resetClicked()){
+	if(button_tare.resetClicked()){
 		screen.PCF8574_LCDClearScreen();
-		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 6);
+		screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 6);
 		screen.print("Tare...");
 		
 		hx711.tare(25);
@@ -162,58 +175,60 @@ void loop(){
 	}
 	
 	//calibrate
-	if(button_4.isHeld()){
+	if(button_tare.isHeld()){
 		button_list.handle();
 		
 		screen.PCF8574_LCDClearScreen();
-		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 6);
+		screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 6);
 		screen.print("Tare...");
 		
 		hx711.tare(25);
 		button_list.handle();
 		
 		screen.PCF8574_LCDClearScreen();
-		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 0);
+		screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 0);
 		screen.print("Calibration");
-		screen.PCF8574_LCDGOTO(LCDLineNumberThree, 0);
+		screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, 0);
 		screen.print("weight:");
 		
 		int cal_weight = 100;
 		update_cal_weight(cal_weight);
 		button_list.handle();
 		
-		while(not button_4.isHeld()){
+		while(not button_tare.isHeld()){
 			button_list.handle();
 			handle_beep();
 			
 			//decrement
-			if(button_1.resetClicked() and cal_weight > 0){
+			if(button_dec.resetClicked() and cal_weight > 0){
 				cal_weight -= 10;
 				update_cal_weight(cal_weight);
 			}
 			
 			//fast decrement
-			if(button_1.isHeld() and cal_weight > 0){
+			if(button_dec.isHeld() and cal_weight > 0){
 				cal_weight -= 10;
 				update_cal_weight(cal_weight);
+				delay(DELAY_CAL_MENU);
 			}
 			
 			//increment
-			if(button_2.resetClicked() and cal_weight < 990){
+			if(button_inc.resetClicked() and cal_weight < 990){
 				cal_weight += 10;
 				update_cal_weight(cal_weight);
 			}
 			
 			//fast increment
-			if(button_2.isHeld() and cal_weight < 990){
+			if(button_inc.isHeld() and cal_weight < 990){
 				cal_weight += 10;
 				update_cal_weight(cal_weight);
+				delay(DELAY_CAL_MENU);
 			}
 			
 			//cancel
-			if(button_3.isHeld()){
+			if(button_stop.isHeld()){
 				show_weight();
-				button_4.resetClicked();
+				button_tare.resetClicked();
 				button_list.handle();
 				
 				goto canceled;
@@ -221,13 +236,14 @@ void loop(){
 		}
 		
 		screen.PCF8574_LCDClearScreen();
-		screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 0);
+		screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 0);
 		screen.print("Calibrating...");
 		
 		hx711.calibrate_scale(cal_weight, 25);
-		
 		store_settings();
 		
+		button_tare.resetClicked();
+		button_list.handle();
 		show_weight();
 	}
 	
@@ -239,7 +255,7 @@ void loop(){
 		set_relays();
 		beep(500);
 	}
-	else if(weight < set_weight and relays_active){
+	else if(weight < set_weight - HYSTERESIS and relays_active){
 		reset_relays();
 	}
 }
@@ -249,16 +265,16 @@ void loop(){
 void show_weight(){
 	screen.PCF8574_LCDClearScreen();
 	//draw the vertical seperating line
-	screen.PCF8574_LCDGOTO(LCDLineNumberOne, 9);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberOne, 9);
 	screen.PCF8574_LCDPrintCustomChar(6);
 	screen.PCF8574_LCDPrintCustomChar(2);
-	screen.PCF8574_LCDGOTO(LCDLineNumberTwo, 9);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 9);
 	screen.PCF8574_LCDPrintCustomChar(6);
 	screen.PCF8574_LCDPrintCustomChar(2);
-	screen.PCF8574_LCDGOTO(LCDLineNumberThree, 9);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, 9);
 	screen.PCF8574_LCDPrintCustomChar(6);
 	screen.PCF8574_LCDPrintCustomChar(2);
-	screen.PCF8574_LCDGOTO(LCDLineNumberFour, 9);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, 9);
 	screen.PCF8574_LCDPrintCustomChar(6);
 	screen.PCF8574_LCDPrintCustomChar(2);
 	
@@ -340,11 +356,11 @@ void update_cal_weight(int cal_weight){
 void set_relays(){
 	relays_active = true;
 	digitalWrite(RELAY_1, HIGH);
-	delay(20);
+	delay(DELAY_RELAYS);
 	digitalWrite(RELAY_2, HIGH);
-	delay(20);
+	delay(DELAY_RELAYS);
 	digitalWrite(RELAY_3, HIGH);
-	delay(20);
+	delay(DELAY_RELAYS);
 	digitalWrite(RELAY_4, HIGH);
 }
 
@@ -353,11 +369,11 @@ void set_relays(){
 void reset_relays(){
 	relays_active = false;
 	digitalWrite(RELAY_1, LOW);
-	delay(20);
+	delay(DELAY_RELAYS);
 	digitalWrite(RELAY_2, LOW);
-	delay(20);
+	delay(DELAY_RELAYS);
 	digitalWrite(RELAY_3, LOW);
-	delay(20);
+	delay(DELAY_RELAYS);
 	digitalWrite(RELAY_4, LOW);
 }
 
@@ -379,16 +395,16 @@ void handle_beep(){
 
 //prints a large character to the screen
 void print_big_char(char digit, int row){
-	screen.PCF8574_LCDGOTO(LCDLineNumberOne, row);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberOne, row);
 	
 	switch(digit){
 		default:
 			screen.print("   ");
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			screen.print("   ");
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			screen.print("   ");
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			screen.print("   ");
 			
 			break;
@@ -397,17 +413,17 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -419,17 +435,17 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(1);
 			screen.PCF8574_LCDSendChar(' ');
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(2);
 			screen.PCF8574_LCDSendChar(' ');
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(2);
 			screen.PCF8574_LCDSendChar(' ');
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -441,16 +457,16 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.print("  ");
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -462,16 +478,16 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.print("  ");
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -483,16 +499,16 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.print("  ");
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.print("  ");
 			screen.PCF8574_LCDPrintCustomChar(3);
@@ -503,16 +519,16 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.print("  ");
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -524,17 +540,17 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -545,17 +561,17 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDSendChar(' ');
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(5);
@@ -567,17 +583,17 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDSendChar(' ');
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -588,16 +604,16 @@ void print_big_char(char digit, int row){
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(6);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.print("  ");
 			screen.PCF8574_LCDPrintCustomChar(2);
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(5);
 			screen.PCF8574_LCDPrintCustomChar(4);
@@ -607,15 +623,15 @@ void print_big_char(char digit, int row){
 		
 		case '-':
 			screen.print("   ");
-			screen.PCF8574_LCDGOTO(LCDLineNumberTwo, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, row);
 			
 			screen.PCF8574_LCDPrintCustomChar(7);
 			screen.PCF8574_LCDPrintCustomChar(0);
 			screen.PCF8574_LCDPrintCustomChar(1);
-			screen.PCF8574_LCDGOTO(LCDLineNumberThree, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, row);
 			
 			screen.print("   ");
-			screen.PCF8574_LCDGOTO(LCDLineNumberFour, row);
+			screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, row);
 			
 			screen.print("   ");
 			
@@ -627,60 +643,22 @@ void print_big_char(char digit, int row){
 
 //load offset and scale settings from eeprom
 void load_settings(){
-	Wire.beginTransmission(EEPROM_ADRESS);
-	Wire.write(0); //set the adress to 0x00
-	Wire.endTransmission(false);
+	long offset = 0;
+	float scale = 0.0;
 	
-	Wire.requestFrom(EEPROM_ADRESS, 8, true); //read 8 bytes from the eeprom: 4 for offset and 4 for scale
+	EEPROM.get(0, offset);
+	EEPROM.get(4, scale);
 	
-	while(Wire.available()){
-		uint8_t read_bytes[4];
-		read_bytes[0] = Wire.read(); //read the first 4 bytes
-		read_bytes[1] = Wire.read(); //for loops are evil
-		read_bytes[2] = Wire.read(); //yes, i could use Wire.readBytes()
-		read_bytes[3] = Wire.read(); //no, i dont know how to use it
-		
-		long offset = 0;
-		
-		memcpy(&offset, read_bytes, 4); //copy the array to the var as bytes
-		
-		hx711.set_offset(offset);
-		
-		read_bytes[0] = Wire.read(); //read the other 4 bytes
-		read_bytes[1] = Wire.read();
-		read_bytes[2] = Wire.read();
-		read_bytes[3] = Wire.read();
-		
-		float scale = 0.0;
-		
-		memcpy(&scale, read_bytes, 4); //copy the array again
-		
-		hx711.set_scale(scale);
-	}
+	hx711.set_offset(offset);
+	hx711.set_scale(scale);
 }
 
 
 //store offset and scale settings to eeprom
 void store_settings(){
-	Wire.beginTransmission(EEPROM_ADRESS);
-	Wire.write(0); //set the adress to 0x00
-	uint8_t write_bytes[4];
 	long offset = hx711.get_offset();
 	float scale = hx711.get_scale();
 	
-	memcpy(write_bytes, &offset, 4); //copy the var to the array as bytes
-	
-	Wire.write(write_bytes[0]); //write to the eeprom
-	Wire.write(write_bytes[1]);
-	Wire.write(write_bytes[2]);
-	Wire.write(write_bytes[3]);
-	
-	memcpy(write_bytes, &scale, 4); //rinse
-	
-	Wire.write(write_bytes[0]); //and repeat
-	Wire.write(write_bytes[1]);
-	Wire.write(write_bytes[2]);
-	Wire.write(write_bytes[3]);
-	
-	Wire.endTransmission();
+	EEPROM.put(0, offset);
+	EEPROM.put(4, scale);
 }
