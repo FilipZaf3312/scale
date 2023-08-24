@@ -85,14 +85,14 @@ void setup(){
 	screen.PCF8574_LCDInit(HD44780LCD::LCDCursorTypeOff); //start screen
 	screen.PCF8574_LCDClearScreen(); //clear the screen
 	screen.PCF8574_LCDBackLightSet(true); //turn on the backlight
-	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberOne, 6);
-	screen.print("Starting...");
-	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 6);
-	screen.print("github.com/");
-	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, 1);
-	screen.print("FilipZaf3312/scale");
-	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, 8);
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberOne, 2);
+	screen.print("Automatic  Scale");
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 15);
 	screen.print("rev 1");
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, 0);
+	screen.print("github.com/");
+	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, 0);
+	screen.print("FilipZaf3312/scale");
 	
 	uint8_t char0[8] = {0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b11111, 0b11111}; //custom characters for large numbers
 	uint8_t char1[8] = {0b00000, 0b00000, 0b00000, 0b00000, 0b10000, 0b11000, 0b11000, 0b11100};
