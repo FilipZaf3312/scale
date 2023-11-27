@@ -36,7 +36,7 @@ const int RELAY_4 = 12;
 const int BUZZER = 13;
 
 //SCREEN
-const int SCREEN_ADRESS = 39; //0x27
+const int SCREEN_ADRESS = 0x27;
 TwoWire wire;
 HD44780LCD screen(4, 20, SCREEN_ADRESS, &wire);
 
@@ -46,7 +46,9 @@ const int HX711_SCL = 3;
 HX711 hx711;
 
 //OTHER CONFIG
-const int HYSTERESIS = 5;
+const unsigned int HX711_START_TIMEOUT = 10000;
+const unsigned long MINIMUM_BOOT_TIME = 1000;
+const int HYSTERESIS = 5; //kg
 
 const unsigned long DELAY_RELAYS = 20;
 const unsigned long DELAY_CAL_MENU = 50;
@@ -81,6 +83,11 @@ void setup(){
 	pinMode(PIN_WIRE_SCL, INPUT_PULLUP);
 	Wire.begin(); //begin I2C
 	
+	Serial.begin(9600); //begin serial debugging
+	Serial.println("Automatic Scale");
+	Serial.println("Version: rev 2");
+	Serial.println("Source code at: github.com/FilipZaf3312/scale");
+	
 	delay(200); //wait for screen to start
 	screen.PCF8574_LCDInit(HD44780LCD::LCDCursorTypeOff); //start screen
 	screen.PCF8574_LCDClearScreen(); //clear the screen
@@ -88,7 +95,7 @@ void setup(){
 	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberOne, 2);
 	screen.print("Automatic  Scale");
 	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 15);
-	screen.print("rev 1");
+	screen.print("rev 2");
 	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberThree, 0);
 	screen.print("github.com/");
 	screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberFour, 0);
@@ -112,13 +119,43 @@ void setup(){
 	screen.PCF8574_LCDCreateCustomChar(6, char6);
 	screen.PCF8574_LCDCreateCustomChar(7, char7);
 	
-	hx711.begin(HX711_DT, HX711_SCL); //start the sensor
-	hx711.wait_ready();
-	hx711.set_gain(HX711_CHANNEL_A_GAIN_128, true); //set the gain
-	load_settings(); //set offset and scale settings
+	Serial.println("Starting HX711...");
+	unsigned long start_time = millis();
 	
-	beep(500);
-	show_weight(); //start normal operation
+	hx711.begin(HX711_DT, HX711_SCL); //start the sensor
+	bool ready = hx711.wait_ready_timeout(HX711_START_TIMEOUT); //is this right?
+	unsigned long ready_time = millis() - start_time;
+	
+	if(ready){
+		hx711.set_gain(HX711_CHANNEL_A_GAIN_128, true); //set the gain
+		load_settings(); //set offset and scale settings
+		
+		Serial.print("HX711 successfully started after ");
+		Serial.print(String(ready_time));
+		Serial.println(" ms.");
+		
+		if(ready_time < MINIMUM_BOOT_TIME){
+			delay(MINIMUM_BOOT_TIME - ready_time); //ensure the boot screen get displayed long enough to be read
+		}
+		
+		serial_list_commands();
+		beep(500);
+		show_weight(); //start normal operation
+	}
+	else {
+		Serial.print("HX711 failed to start! Timed out after ");
+		Serial.print(String(ready_time));
+		Serial.println(" ms.");
+		
+		screen.PCF8574_LCDClearScreen();
+		screen.PCF8574_LCDGOTO(HD44780LCD::LCDLineNumberTwo, 8);
+		screen.print("HX711 Failure!");
+		
+		while(true){
+			//lock up
+		}
+	}
+	
 }
 
 
@@ -257,6 +294,82 @@ void loop(){
 	}
 	else if(weight < set_weight - HYSTERESIS and relays_active){
 		reset_relays();
+	}
+	
+	if(Serial.available()){
+		int cmd = Serial.read(); //read first letter sent from serial
+		
+		switch (cmd) {
+			case 'h':
+				serial_list_commands();
+				
+				while(Serial.available()){Serial.read();} //empty buffer
+				break;
+			
+			case 'r':
+				Serial.print(weight);
+				Serial.print(" / ");
+				Serial.println(set_weight);
+				
+				while(Serial.available()){Serial.read();}
+				break;
+			
+			case 'a':
+				int adj_weight;
+				adj_weight = Serial.parseInt(SKIP_WHITESPACE);
+				
+				if((adj_weight >= 10) && (adj_weight <= 990)){
+					set_weight = adj_weight;
+					update_set_weight();
+					
+					Serial.print("Set weight adjusted to: ");
+					Serial.println(adj_weight);
+				}
+				else{
+					Serial.println("Invalid set weight! Use values between 10 and 990.");
+				}
+				
+				while(Serial.available()){Serial.read();}
+				break;
+			
+			case 't':
+				Serial.println("Tare...");
+				hx711.tare();
+				show_weight();
+				
+				Serial.print("Tare now is: ");
+				Serial.println(hx711.get_tare());
+				
+				while(Serial.available()){Serial.read();}
+				break;
+			
+			case 's':
+				Serial.println("Stopping...");
+				
+				set_relays();
+				beep(500);
+				delay(500);
+				reset_relays();
+				handle_beep();
+				
+				while(Serial.available()){Serial.read();}
+				break;
+			
+			case 'g':
+				Serial.print("Current offset is: ");
+				Serial.println(hx711.get_offset());
+				Serial.print("Current scaling factor is: ");
+				Serial.println(hx711.get_scale());
+				
+				while(Serial.available()){Serial.read();}
+				break;
+			
+			default:
+				Serial.println("Invalid command.");
+				
+				while(Serial.available()){Serial.read();}
+				break;
+		}
 	}
 }
 
@@ -661,4 +774,15 @@ void store_settings(){
 	
 	EEPROM.put(0, offset);
 	EEPROM.put(4, scale);
+}
+
+
+void serial_list_commands(){
+	Serial.println("Use the following commands to debug the scale:");
+	Serial.println("h: Display this message.");
+	Serial.println("r: Read current and set weight.");
+	Serial.println("a 100: Adjust set weight to 100kg. Use values between 10 and 990.");
+	Serial.println("t: Tare and get current tare weight.");
+	Serial.println("s: Stop. (Trigger relays)");
+	Serial.println("g: Get calibration offset and scale.");
 }
